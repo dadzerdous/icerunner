@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stealth Runner Mobile</title>
+    <title>Stealth Runner Mobile - Pro</title>
     <style>
         body { margin: 0; background: #1a1a1a; overflow: hidden; font-family: sans-serif; touch-action: none; }
         canvas { display: block; background: #222; margin: 0 auto; width: 100vw; height: auto; }
@@ -17,8 +17,8 @@
     </div>
     
     <div class="mobile-hud">
-        <div class="zone">HOLD LEFT TO SLIDE</div>
-        <div class="zone">TAP RIGHT TO JUMP</div>
+        <div class="zone">HOLD LEFT: SLIDE</div>
+        <div class="zone">HOLD RIGHT: HIGH JUMP</div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -28,7 +28,6 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const scoreEl = document.getElementById('score');
 
-// Static internal resolution
 canvas.width = 800;
 canvas.height = 400;
 
@@ -43,15 +42,21 @@ const player = {
     width: 40, height: 60,
     baseHeight: 60, slideHeight: 30,
     color: '#3498db',
-    dy: 0, jumpForce: 13, gravity: 0.7,
-    grounded: false, isSliding: false
+    dy: 0, 
+    jumpForce: -10,      // Initial burst
+    jumpHoldForce: -0.5, // Added while holding
+    maxJumpFrames: 15,   // How long you can hold to go higher
+    jumpCounter: 0,
+    gravity: 0.7,
+    grounded: false, 
+    isSliding: false,
+    isJumping: false
 };
 
 let obstacles = [];
-
-// --- INPUT HANDLING (MOBILE & DESKTOP) ---
 const input = { left: false, right: false };
 
+// --- INPUT HANDLING ---
 function handleStart(e) {
     if (!gameActive) { resetGame(); return; }
     
@@ -59,57 +64,93 @@ function handleStart(e) {
     const screenWidth = window.innerWidth;
 
     if (touchX < screenWidth / 2) {
-        input.left = true; // Slide zone
+        input.left = true;
     } else {
+        input.right = true;
         if (player.grounded) {
-            player.dy = -player.jumpForce;
+            player.dy = player.jumpForce;
             player.grounded = false;
+            player.isJumping = true;
+            player.jumpCounter = 0;
         }
     }
 }
 
 function handleEnd(e) {
-    // If it's a touch event, we check if any touches remain on the left side
     if (e.touches) {
         let leftActive = false;
+        let rightActive = false;
         for(let i=0; i<e.touches.length; i++) {
             if (e.touches[i].clientX < window.innerWidth / 2) leftActive = true;
+            else rightActive = true;
         }
         input.left = leftActive;
+        input.right = rightActive;
     } else {
         input.left = false;
+        input.right = false;
+    }
+    
+    // Stop the upward boost as soon as the finger is lifted
+    if (!input.right) {
+        player.isJumping = false;
     }
 }
 
-// Listeners for both Touch and Mouse
 window.addEventListener('touchstart', (e) => { e.preventDefault(); handleStart(e); }, {passive: false});
 window.addEventListener('touchend', (e) => { e.preventDefault(); handleEnd(e); }, {passive: false});
 window.addEventListener('mousedown', handleStart);
 window.addEventListener('mouseup', handleEnd);
 
-// Keyboard Fallback
+// Keyboard Logic
 window.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' && player.grounded) { player.dy = -player.jumpForce; player.grounded = false; }
+    if (e.code === 'ArrowUp' || e.code === 'Space') {
+        if (player.grounded) {
+            player.dy = player.jumpForce;
+            player.grounded = false;
+            player.isJumping = true;
+            player.jumpCounter = 0;
+        }
+        input.right = true;
+    }
     if (e.code === 'ArrowDown') input.left = true;
     if (!gameActive) resetGame();
 });
-window.addEventListener('keyup', (e) => { if (e.code === 'ArrowDown') input.left = false; });
+window.addEventListener('keyup', (e) => {
+    if (e.code === 'ArrowUp' || e.code === 'Space') { input.right = false; player.isJumping = false; }
+    if (e.code === 'ArrowDown') input.left = false;
+});
 
 function spawnObstacle() {
-    const type = Math.random() > 0.4 ? 'ground' : 'air';
-    obstacles.push({
-        x: canvas.width,
-        y: type === 'ground' ? 310 : 250, 
-        width: 35,
-        height: type === 'ground' ? 50 : 40,
-        color: type === 'ground' ? '#e74c3c' : '#f1c40f'
-    });
-    nextSpawnFrame = frameCount + 50 + Math.floor(Math.random() * 40);
+    const rand = Math.random();
+    let type;
+    
+    // 33% chance for each type
+    if (rand < 0.33) type = 'ground';      // Must jump
+    else if (rand < 0.66) type = 'mid';    // Must jump high or slide
+    else type = 'air';                     // Must slide
+
+    let obsY, obsH, obsW, obsCol;
+
+    switch(type) {
+        case 'ground':
+            obsY = 310; obsH = 50; obsW = 35; obsCol = '#e74c3c';
+            break;
+        case 'mid':
+            obsY = 280; obsH = 40; obsW = 40; obsCol = '#9b59b6'; // Purple middle block
+            break;
+        case 'air':
+            obsY = 240; obsH = 40; obsW = 45; obsCol = '#f1c40f';
+            break;
+    }
+
+    obstacles.push({ x: canvas.width, y: obsY, width: obsW, height: obsH, color: obsCol });
+    nextSpawnFrame = frameCount + 45 + Math.floor(Math.random() * 40);
 }
 
 function resetGame() {
     score = 0; speed = 6; obstacles = []; gameActive = true;
-    player.y = 300; frameCount = 0; nextSpawnFrame = 0;
+    player.y = 300; player.dy = 0; frameCount = 0; nextSpawnFrame = 0;
     scoreEl.innerText = score;
     update();
 }
@@ -127,6 +168,14 @@ function update() {
         player.height = player.baseHeight;
     }
 
+    // High Jump Logic (Variable Jump)
+    if (input.right && player.isJumping) {
+        if (player.jumpCounter < player.maxJumpFrames) {
+            player.dy += player.jumpHoldForce;
+            player.jumpCounter++;
+        }
+    }
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Ground line
@@ -141,6 +190,7 @@ function update() {
         player.y = 360 - player.height;
         player.dy = 0;
         player.grounded = true;
+        player.isJumping = false;
     }
 
     // Draw Player
@@ -155,6 +205,7 @@ function update() {
         ctx.fillStyle = obs.color;
         ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
 
+        // Collision
         if (player.x < obs.x + obs.width && player.x + player.width > obs.x &&
             player.y < obs.y + obs.height && player.y + player.height > obs.y) {
             gameActive = false;
@@ -170,7 +221,7 @@ function update() {
             obstacles.splice(i, 1);
             score++;
             scoreEl.innerText = score;
-            speed += 0.04;
+            speed += 0.05;
         }
     }
     requestAnimationFrame(update);
